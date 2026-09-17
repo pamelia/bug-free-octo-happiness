@@ -1,0 +1,47 @@
+name: Validate and release training demo
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+    tags: ["cks-spot-fleet-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - run: python -m py_compile demos/cks-spot-fleet/training.py demos/cks-spot-fleet/wait_for_dns.py
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/cks-spot-fleet-v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Package source entrypoint
+        run: |
+          mkdir -p dist/source
+          cp demos/cks-spot-fleet/training.py dist/source/training.py
+          source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          tar --sort=name --mtime="@$source_date_epoch" --owner=0 --group=0 --numeric-owner \
+            -C dist/source -cf - training.py | gzip -n > dist/cks-spot-fleet-training.tar.gz
+          (cd dist && sha256sum cks-spot-fleet-training.tar.gz > cks-spot-fleet-training.tar.gz.sha256)
+      - name: Publish versioned release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/cks-spot-fleet-training.tar.gz
+          dist/cks-spot-fleet-training.tar.gz.sha256
+          --verify-tag
+          --generate-notes
